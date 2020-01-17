@@ -1,6 +1,6 @@
 import React from 'react';
 import './App.css';
-import Logo from './logo.png'
+import alarms from './alarms'
 
 import { makeStyles } from '@material-ui/core/styles';
 import { 
@@ -12,29 +12,17 @@ import {
   TableHead,
   TableRow,
   Paper,
-  TextField,
-  Divider,
   InputBase,
   createStyles,
+  Divider,
+  IconButton
 }  from '@material-ui/core';
 import Toolbar from '@material-ui/core/Toolbar';
 import Typography from '@material-ui/core/Typography';
-import IconButton from '@material-ui/core/IconButton';
-import MenuIcon from '@material-ui/icons/Menu';
+import RefreshIcon from '@material-ui/icons/Refresh';
+import debounce from 'lodash'
+import axios from 'axios'
 import SearchIcon from '@material-ui/icons/Search';
-
-
-const csvData = `datetime,source_id,scenario_id,warning_type,alarm_region,number_of_targets,alarmID,ownpositionLat,ownpositionLon,ownpositionAlt,target1Lat,target1Lon,target1Alt,target1Heading,target1Velocity,target2Lat,target2Lon,target2Alt,target2Heading,target2Velocity,target3Lat,target3Lon,target3Alt,target3Heading,target3Velocity
-2020-01-14T00:02:26+0000,streamingService,Clear_HtHt_Straight_05kph,advice,ahead,1,kjh4d8db67x89as,32.1998293,-112.23132321,100,1.2321,3.43,32.199999,-112.234762,100.1,270.1,3.21,,,,,,,,,
-2020-01-14T00:06:16+0000,competitorA,Clear_HtHt_Straight_05kph,alarm,left,1,sdf987sdkjhsdf,32.199890,-112.23132321,100,12.9,3,32.1,-112.234762,99,182,1.2,,,,,,,,,,
-2020-01-14T00:08:51+0000,competitorA,Clear_HtHt_Straight_05kph,clear,,,sdf987sdkjhsdf,32.198890,-112.23000321,98.12,360.12,0,,,,,,,,,,,,,`
-
-const parseCSV = (csvText) => csvText.split(/\r?\n/).map(line => line.split(/\r?,/))
-
-const MAKE_REPEATED = (arr, repeats) =>
-  [].concat(...Array.from({ length: repeats }, () => arr));
-
-console.log(parseCSV(csvData))
 
 const useStyles = makeStyles((theme) =>
   createStyles({
@@ -64,34 +52,60 @@ const useStyles = makeStyles((theme) =>
         marginLeft: theme.spacing(1),
         width: 'auto',
       },
+      color: 'black'
+    },
+    time: {
+      position: 'relative',
+      borderRadius: theme.shape.borderRadius,
+      backgroundColor: theme.palette.common.white,
+      '&:hover': {
+        backgroundColor: theme.palette.common.white,
+      },
+      marginLeft: 0,
+      width: '100%',
+      [theme.breakpoints.up('sm')]: {
+        marginLeft: theme.spacing(1),
+        width: 'auto',
+      },
+      color: 'black',
+      width: '100%',
+      [theme.breakpoints.up('sm')]: {
+        width: 80,
+        '&:focus': {
+          width: 100,
+        },
+      },
     },
     searchIcon: {
       width: theme.spacing(7),
       height: '100%',
       position: 'absolute',
-      pointerEvents: 'none',
       display: 'flex',
-      alignItems: 'center',
+      alignItems: 'left',
       justifyContent: 'center',
+      color: 'gray',
     },
     inputRoot: {
       color: 'inherit',
     },
     inputInput: {
-      padding: theme.spacing(1, 1, 1, 7),
+      padding: theme.spacing(1, 1, 1, 1),
       transition: theme.transitions.create('width'),
       width: '100%',
       [theme.breakpoints.up('sm')]: {
-        width: 120,
+        width: 200,
         '&:focus': {
-          width: 200,
+          width: 300,
         },
       },
+    },
+    TableEmph: {
+      background: '#0f313b1f'
     },
   }),
 );
 
-function SearchAppBar({value}) {
+function SearchAppBar({value, onSearch, onRefresh, time, onTimeChange}) {
   const classes = useStyles();
 
   return (
@@ -103,19 +117,31 @@ function SearchAppBar({value}) {
             className={classes.menuButton}
             color="inherit"
             aria-label="open drawer"
+            onClick={() => onRefresh(value)}
           >
-            <MenuIcon />
+            <RefreshIcon />
           </IconButton>
           <Typography className={classes.title} variant="h6" noWrap>
             HackAZ 2020 Event Client
             
           </Typography>
-          <div className={classes.search}>
-            <div className={classes.searchIcon}>
-              <SearchIcon />
-            </div>
+          <div className={classes.time}>
             <InputBase
-              placeholder="Search…"
+              value={time}
+              onChange={onTimeChange}
+              placeholder="-Minutes"
+              classes={{
+                root: classes.inputRoot,
+                input: classes.inputInput,
+              }}
+              inputProps={{ 'aria-label': 'search' }}
+            />
+          </div>
+          <div className={classes.search}>
+            <InputBase
+              value={value}
+              onChange={onSearch}
+              placeholder="Source Id"
               classes={{
                 root: classes.inputRoot,
                 input: classes.inputInput,
@@ -129,49 +155,89 @@ function SearchAppBar({value}) {
   );
 }
 
-function SimpleTable() {
-  const classes = useStyles();
+function makePositionData(position, classes, key) {
+  return [
+  <TableCell align="right" key={key+"1"}>{ position.latitude }</TableCell>,
+  <TableCell align="right" key={key+"2"}>{ position.longitude }</TableCell>,
+  <TableCell align="right" key={key+"3"}>{ position.altitude }</TableCell>,
+  <TableCell align="right" key={key+"4"}>{ position.heading }</TableCell>,
+  <TableCell align="right" key={key+"5"}>{ position.velocity }</TableCell>,
+  ]
+}
 
-  const cells = parseCSV(csvData)
-  const headerData = cells[0];
-  const bodyData = MAKE_REPEATED(cells.slice(1), 20);
+function makePositionHeading(title, classes) {
+  return [
+  <TableCell align="right" key={ `${title}-latitude` }>{ `${title}-latitude` }</TableCell>,
+  <TableCell align="right" key={ `${title}-long` }>{ `${title}-longitude` }</TableCell>,
+  <TableCell align="right" key={ `${title}-alt` }>{ `${title}-altitude` }</TableCell>,
+  <TableCell align="right" key={ `${title}-head` }>{ `${title}-heading` }</TableCell>,
+  <TableCell align="right" key={ `${title}-vel` }> {`${title}-velocity` }</TableCell>,
+  ]
+}
+
+function SimpleTable({data}) {
+  console.log(data)
 
   return (
     <TableContainer className="table" component={Paper}>
       <Table  size="small" stickyHeader>
         <TableHead>
-          <TableRow>
-            { 
-             headerData.map(header => <TableCell align="right">{ header }</TableCell>)
-            }
+          <TableRow key="header">
+             <TableCell align="right">{ 'alarmId' }</TableCell>
+             <TableCell align="right">{ 'streamId' }</TableCell>
+             <TableCell align="right">{ 'sourceId' }</TableCell>
+             <TableCell align="right">{ 'type' }</TableCell>
+             <TableCell align="right">{ 'region' }</TableCell>
+             {makePositionHeading('position')}
+             {makePositionHeading('target1Position')}
+             {makePositionHeading('target2Position')}
+             {makePositionHeading('target3Position')}
           </TableRow>
         </TableHead>
         <TableBody>
           {
-            bodyData.map(row => (
-              <TableRow key={row[0]}>
-                { row.map(cell => <TableCell align="right">{cell}</TableCell>)}
-              </TableRow>
-          ))}
+            data && data.map((alarm,i) => (
+            <TableRow key={i}>
+              <TableCell align="right" key="alarmId">{ alarm.alarmId }</TableCell>
+              <TableCell align="right"key="streamId">{ alarm.streamId }</TableCell>
+              <TableCell align="right"key="sourceId">{ alarm.sourceId }</TableCell>
+              <TableCell align="right"key="type">{ alarm.type }</TableCell>
+              <TableCell align="right"key="regin">{ alarm.region }</TableCell>
+             {makePositionData(alarm.position)}
+             {makePositionData(alarm.target1Position)}
+             {makePositionData(alarm.target2Position)}
+             {makePositionData(alarm.target3Position)}
+            </TableRow>
+            ))
+          }
+          
         </TableBody>
       </Table>
     </TableContainer>
-  );
-};
+  )
+}
 
 
 
+
+let data
 function App() {
   const classes = useStyles();
-  const [searchTerm, changeSearchTerm] = React.useState('')
-  /* const [rows, setRows] = useState(parseCSV(csvData))
+  const [searchTerm, setSearchTerm] = React.useState('5cf1009186ef473aa4a4c3109d0982bb')
+  const [time, setTime] = React.useState('60')
+  const [data, setData] = React.useState([])
 
-  function filterRows(filters){
-    
-    setRows(rows.filter(row => row.find()))
+  function search(term) {
+    setSearchTerm(term)
+    doSearch(term)
   }
-  */
-  
+
+  function doSearch() {
+    const params = { minutesToSearch: parseInt(time) } 
+    axios.get(`https://hackaz.modularminingcloud.com/api/Alert/${searchTerm}`, params).then(response => response.data && setData(response.data)).catch(err => setData([]))
+  }
+
+  const simpleTable = React.useMemo(() => <SimpleTable data={data} />, [data])
 
   return (
     <div className="App">
@@ -186,11 +252,11 @@ function App() {
         </div>
         </AppBar>
        </header> */}
-        <SearchAppBar value={searchTerm} />
+        <SearchAppBar time={time} value={searchTerm} onTimeChange={event => setTime(event.target.value)} onSearch={event => setSearchTerm(event.target.value)} onRefresh={doSearch} />
       <div className="Body">
         <div className="row">
           <div className="column">
-            <SimpleTable />
+            {simpleTable}
           </div>
           <div class="column"></div>
         </div>

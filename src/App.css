@@ -13,6 +13,10 @@ body {
   max-width: 200px;
 }
 
+.ts_emph {
+  background: #0f313b1f;
+}
+
 .row:after {
   content: "";
   display: table;
